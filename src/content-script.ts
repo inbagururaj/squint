@@ -104,12 +104,12 @@ chrome.runtime.onMessage.addListener(
       return false;
     }
     if (message.type === 'SQUINT_REMOVE_FIXES') {
-      stopObserver();
-      removeFixes();
       try {
+        stopObserver();
+        removeFixes();
         sendResponse({ type: 'SQUINT_REMOVE_RESULT' });
       } catch (err) {
-        console.error('[Squint] sendResponse failed:', err);
+        console.error('[Squint] removeFixes failed:', err);
       }
       return false;
     }
