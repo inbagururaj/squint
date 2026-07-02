@@ -44,9 +44,11 @@ export interface ScanSummary {
 export type ContentMessage =
   | { type: 'SQUINT_SCAN_REQUEST' }
   | { type: 'SQUINT_APPLY_PRESET'; presetId: PresetId }
-  | { type: 'SQUINT_REMOVE_FIXES' };
+  | { type: 'SQUINT_REMOVE_FIXES' }
+  | { type: 'SQUINT_STATUS_REQUEST' };
 
 export type ContentResponse =
   | { type: 'SQUINT_SCAN_RESULT'; summary: ScanSummary }
   | { type: 'SQUINT_APPLY_RESULT'; appliedCount: number }
-  | { type: 'SQUINT_REMOVE_RESULT' };
+  | { type: 'SQUINT_REMOVE_RESULT' }
+  | { type: 'SQUINT_STATUS_RESULT'; applied: boolean };

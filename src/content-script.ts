@@ -3,7 +3,7 @@ import { scanVisibleTextElements } from './dom-scanner';
 import { contrastRatio, isLargeText, passesAA } from './contrast';
 import { extractPalette } from './palette';
 import { computePresets } from './presets';
-import { applyPreset, getOrCreateStyleElement, removeFixes, watchStylesheetPersistence } from './apply-fixes';
+import { applyPreset, getOrCreateStyleElement, isApplied, removeFixes, watchStylesheetPersistence } from './apply-fixes';
 import { colorDistance } from './color-utils';
 
 const PALETTE_SIZE = 8;
@@ -92,6 +92,7 @@ function stopObserver(): void {
 
 chrome.runtime.onMessage.addListener(
   (message: ContentMessage, _sender, sendResponse: (response: ContentResponse) => void) => {
+    if (!message || typeof message.type !== 'string') return false;
     if (message.type === 'SQUINT_SCAN_REQUEST') {
       runScan().then((summary) => sendResponse({ type: 'SQUINT_SCAN_RESULT', summary }));
       return true;
@@ -105,7 +106,15 @@ chrome.runtime.onMessage.addListener(
     if (message.type === 'SQUINT_REMOVE_FIXES') {
       stopObserver();
       removeFixes();
-      sendResponse({ type: 'SQUINT_REMOVE_RESULT' });
+      try {
+        sendResponse({ type: 'SQUINT_REMOVE_RESULT' });
+      } catch (err) {
+        console.error('[Squint] sendResponse failed:', err);
+      }
+      return false;
+    }
+    if (message.type === 'SQUINT_STATUS_REQUEST') {
+      sendResponse({ type: 'SQUINT_STATUS_RESULT', applied: isApplied() });
       return false;
     }
     return false;

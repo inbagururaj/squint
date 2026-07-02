@@ -26,12 +26,22 @@ function setCleansedState(isCleansed: boolean): void {
   cleanseButton.classList.toggle('is-active', isCleansed);
 }
 
+async function syncStateFromTab(): Promise<void> {
+  try {
+    const tabId = await getActiveTabId();
+    const response = await sendContentMessage(tabId, { type: 'SQUINT_STATUS_REQUEST' });
+    if (response && response.type === 'SQUINT_STATUS_RESULT') setCleansedState(response.applied);
+  } catch {
+    // No content script on this page (e.g. chrome:// tabs) — stay in idle state.
+  }
+}
+
 async function cleanse(): Promise<void> {
   statusEl.textContent = 'Scanning page...';
   noFailuresStatusEl.hidden = true;
   const tabId = await getActiveTabId();
   const scanResponse = await sendContentMessage(tabId, { type: 'SQUINT_SCAN_REQUEST' });
-  if (scanResponse.type !== 'SQUINT_SCAN_RESULT') return;
+  if (!scanResponse || scanResponse.type !== 'SQUINT_SCAN_RESULT') return;
 
   const summary: ScanSummary = scanResponse.summary;
   if (summary.totalFailing === 0) {
@@ -44,7 +54,7 @@ async function cleanse(): Promise<void> {
     type: 'SQUINT_APPLY_PRESET',
     presetId: DEFAULT_PRESET_ID,
   });
-  if (applyResponse.type === 'SQUINT_APPLY_RESULT') {
+  if (applyResponse && applyResponse.type === 'SQUINT_APPLY_RESULT') {
     statusEl.textContent = `Fixed ${applyResponse.appliedCount} elements.`;
     setCleansedState(true);
   }
@@ -54,6 +64,11 @@ async function unCleanse(): Promise<void> {
   statusEl.textContent = 'Restoring page...';
   const tabId = await getActiveTabId();
   const response = await sendContentMessage(tabId, { type: 'SQUINT_REMOVE_FIXES' });
+  console.error('[Squint] undo response:', response, 'lastError:', chrome.runtime.lastError);
+  if (!response) {
+    statusEl.textContent = 'Undo failed — try reloading the page.';
+    return;
+  }
   if (response.type === 'SQUINT_REMOVE_RESULT') {
     statusEl.textContent = '';
     setCleansedState(false);
@@ -78,3 +93,5 @@ async function handleToggle(): Promise<void> {
 cleanseButton.addEventListener('click', () => {
   void handleToggle();
 });
+
+void syncStateFromTab();

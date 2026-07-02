@@ -28,6 +28,10 @@ export function removeFixes(): void {
   document.getElementById(STYLE_ELEMENT_ID)?.remove();
 }
 
+export function isApplied(): boolean {
+  return document.getElementById(STYLE_ELEMENT_ID) !== null;
+}
+
 export function watchStylesheetPersistence(styleEl: HTMLStyleElement): MutationObserver {
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
