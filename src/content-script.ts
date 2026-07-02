@@ -1,10 +1,42 @@
-import type { RGB, ScannedElement, FailingElement, ScanSummary, PresetId, ContentMessage, ContentResponse } from './types';
+import type {
+  RGB,
+  ScannedElement,
+  FailingElement,
+  ScanSummary,
+  PresetId,
+  ContentMessage,
+  ContentResponse,
+  SimplifyKind,
+  SimplifyEntry,
+  SimplifySummary,
+} from './types';
+import { SQUINT_SIMPLIFY_ID_ATTR } from './types';
 import { scanVisibleTextElements } from './dom-scanner';
 import { contrastRatio, isLargeText, passesAA } from './contrast';
 import { extractPalette } from './palette';
 import { computePresets } from './presets';
 import { applyPreset, getOrCreateStyleElement, isApplied, removeFixes, watchStylesheetPersistence } from './apply-fixes';
 import { colorDistance } from './color-utils';
+import {
+  isMarqueeElement,
+  isSmallNonLinkedImage,
+  isSmallAnimatedElement,
+  isLargeBackgroundImageElement,
+  buildFontFrequencyMap,
+  findDominantFontSignature,
+  isRareFontSample,
+  dominantFontWeight,
+  type ImageDescriptor,
+  type BackgroundDescriptor,
+  type FontSample,
+} from './simplify';
+import {
+  applySimplify,
+  getOrCreateSimplifyStyleElement,
+  isSimplifyApplied,
+  removeSimplify,
+  watchSimplifyPersistence,
+} from './simplify-apply';
 
 const PALETTE_SIZE = 8;
 const PALETTE_DEDUPE_THRESHOLD = 24;
@@ -90,6 +122,171 @@ function stopObserver(): void {
   persistenceObserver = null;
 }
 
+interface SimplifyCandidate {
+  squintId: number;
+  kind: SimplifyKind;
+  fontWeight?: number;
+}
+
+const SIMPLIFY_KIND_ORDER: SimplifyKind[] = [
+  'marquee',
+  'small-image',
+  'small-animated',
+  'rare-font',
+  'large-background',
+];
+
+let simplifyCandidates: SimplifyCandidate[] = [];
+const simplifyElementsById = new Map<number, HTMLElement>();
+let simplifyIdCounter = 0;
+let simplifyObserver: MutationObserver | null = null;
+
+function nextSimplifyId(el: HTMLElement): number {
+  const id = simplifyIdCounter++;
+  el.setAttribute(SQUINT_SIMPLIFY_ID_ATTR, String(id));
+  simplifyElementsById.set(id, el);
+  return id;
+}
+
+function isExcludedFromSimplify(el: Element): boolean {
+  if (el.closest('svg')) return true;
+  if (el.tagName === 'CANVAS' || el.tagName === 'IFRAME') return true;
+  if ((el as HTMLElement).isContentEditable) return true;
+  return false;
+}
+
+function isComputedVisibleForSimplify(style: CSSStyleDeclaration): boolean {
+  return style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity) > 0;
+}
+
+function isLinkedElement(el: Element): boolean {
+  return el.closest('a') !== null;
+}
+
+function toImageDescriptor(el: HTMLElement): ImageDescriptor {
+  const rect = el.getBoundingClientRect();
+  return {
+    tagName: el.tagName,
+    widthPx: rect.width,
+    heightPx: rect.height,
+    isLinked: isLinkedElement(el),
+    src: el instanceof HTMLImageElement ? el.currentSrc || el.src : '',
+  };
+}
+
+function toBackgroundDescriptor(el: HTMLElement, style: CSSStyleDeclaration): BackgroundDescriptor {
+  const rect = el.getBoundingClientRect();
+  return {
+    widthPx: rect.width,
+    heightPx: rect.height,
+    hasBackgroundImage: style.backgroundImage !== 'none' && style.backgroundImage !== '',
+  };
+}
+
+function hasDirectVisibleTextForSimplify(el: Element): boolean {
+  for (const node of Array.from(el.childNodes)) {
+    if (node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').trim().length > 0) return true;
+  }
+  return false;
+}
+
+function buildSimplifySummary(candidates: SimplifyCandidate[]): SimplifySummary {
+  const counts = SIMPLIFY_KIND_ORDER.reduce(
+    (acc, kind) => {
+      acc[kind] = 0;
+      return acc;
+    },
+    {} as Record<SimplifyKind, number>,
+  );
+  for (const candidate of candidates) counts[candidate.kind] += 1;
+  return { totalFlagged: candidates.length, counts };
+}
+
+function runSimplifyScan(): SimplifySummary {
+  simplifyCandidates = [];
+  simplifyElementsById.clear();
+  simplifyIdCounter = 0;
+
+  const allElements = Array.from(document.body.querySelectorAll<HTMLElement>('*'));
+  const fontSampleElements: HTMLElement[] = [];
+  const fontSampleStyles: CSSStyleDeclaration[] = [];
+
+  for (const el of allElements) {
+    if (isExcludedFromSimplify(el)) continue;
+    const style = window.getComputedStyle(el);
+    if (!isComputedVisibleForSimplify(style)) continue;
+
+    if (isMarqueeElement(el.tagName)) {
+      const id = nextSimplifyId(el);
+      simplifyCandidates.push({ squintId: id, kind: 'marquee' });
+      continue;
+    }
+
+    if (el instanceof HTMLImageElement || el.tagName === 'PICTURE') {
+      const descriptor = toImageDescriptor(el);
+      if (isSmallAnimatedElement(descriptor)) {
+        const id = nextSimplifyId(el);
+        simplifyCandidates.push({ squintId: id, kind: 'small-animated' });
+        continue;
+      }
+      if (isSmallNonLinkedImage(descriptor)) {
+        const id = nextSimplifyId(el);
+        simplifyCandidates.push({ squintId: id, kind: 'small-image' });
+        continue;
+      }
+    }
+
+    const backgroundDescriptor = toBackgroundDescriptor(el, style);
+    if (isLargeBackgroundImageElement(backgroundDescriptor)) {
+      const id = nextSimplifyId(el);
+      simplifyCandidates.push({ squintId: id, kind: 'large-background' });
+      continue;
+    }
+
+    if (hasDirectVisibleTextForSimplify(el)) {
+      fontSampleElements.push(el);
+      fontSampleStyles.push(style);
+    }
+  }
+
+  const fontSamples: FontSample[] = fontSampleStyles.map((style) => ({
+    fontFamily: style.fontFamily,
+    fontWeight: parseInt(style.fontWeight, 10) || 400,
+    textDecorationLine: style.textDecorationLine,
+  }));
+  const frequency = buildFontFrequencyMap(fontSamples);
+  const dominantSignature = findDominantFontSignature(frequency);
+  const normalizedWeight = dominantFontWeight(fontSamples, dominantSignature);
+
+  fontSampleElements.forEach((el, idx) => {
+    const sample = fontSamples[idx];
+    if (isRareFontSample(sample, frequency, dominantSignature)) {
+      const id = nextSimplifyId(el);
+      simplifyCandidates.push({ squintId: id, kind: 'rare-font', fontWeight: normalizedWeight });
+    }
+  });
+
+  return buildSimplifySummary(simplifyCandidates);
+}
+
+function applyChosenSimplify(): number {
+  const entries: SimplifyEntry[] = simplifyCandidates
+    .filter((c) => simplifyElementsById.has(c.squintId))
+    .map((c) => ({ squintId: c.squintId, kind: c.kind, fontWeight: c.fontWeight }));
+  applySimplify(entries);
+  return entries.length;
+}
+
+function ensureSimplifyObserver(): void {
+  if (simplifyObserver) return;
+  simplifyObserver = watchSimplifyPersistence(getOrCreateSimplifyStyleElement());
+}
+
+function stopSimplifyObserver(): void {
+  simplifyObserver?.disconnect();
+  simplifyObserver = null;
+}
+
 chrome.runtime.onMessage.addListener(
   (message: ContentMessage, _sender, sendResponse: (response: ContentResponse) => void) => {
     if (!message || typeof message.type !== 'string') return false;
@@ -115,6 +312,31 @@ chrome.runtime.onMessage.addListener(
     }
     if (message.type === 'SQUINT_STATUS_REQUEST') {
       sendResponse({ type: 'SQUINT_STATUS_RESULT', applied: isApplied() });
+      return false;
+    }
+    if (message.type === 'SQUINT_SIMPLIFY_SCAN_REQUEST') {
+      const summary = runSimplifyScan();
+      sendResponse({ type: 'SQUINT_SIMPLIFY_SCAN_RESULT', summary });
+      return false;
+    }
+    if (message.type === 'SQUINT_SIMPLIFY_APPLY') {
+      ensureSimplifyObserver();
+      const appliedCount = applyChosenSimplify();
+      sendResponse({ type: 'SQUINT_SIMPLIFY_APPLY_RESULT', appliedCount });
+      return false;
+    }
+    if (message.type === 'SQUINT_SIMPLIFY_REMOVE') {
+      try {
+        stopSimplifyObserver();
+        removeSimplify();
+        sendResponse({ type: 'SQUINT_SIMPLIFY_REMOVE_RESULT' });
+      } catch (err) {
+        console.error('[Squint] removeSimplify failed:', err);
+      }
+      return false;
+    }
+    if (message.type === 'SQUINT_SIMPLIFY_STATUS_REQUEST') {
+      sendResponse({ type: 'SQUINT_SIMPLIFY_STATUS_RESULT', applied: isSimplifyApplied() });
       return false;
     }
     return false;

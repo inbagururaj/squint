@@ -22,7 +22,18 @@ button {
   color: #fff;
 }
 
-#status {
+#simplify-button {
+  margin-top: 8px;
+}
+
+#simplify-button.is-active {
+  background: #2f6f4f;
+  border-color: #2f6f4f;
+  color: #fff;
+}
+
+#status,
+#simplify-status {
   font-size: 12px;
   color: #444;
   min-height: 16px;

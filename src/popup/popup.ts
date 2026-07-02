@@ -95,3 +95,80 @@ cleanseButton.addEventListener('click', () => {
 });
 
 void syncStateFromTab();
+
+const SIMPLIFY_IDLE_LABEL = 'Simplify page';
+const SIMPLIFIED_LABEL = 'Simplified — click to undo';
+
+const simplifyButton = document.getElementById('simplify-button') as HTMLButtonElement;
+const simplifyStatusEl = document.getElementById('simplify-status') as HTMLElement;
+
+let simplified = false;
+
+function setSimplifiedState(isSimplified: boolean): void {
+  simplified = isSimplified;
+  simplifyButton.textContent = isSimplified ? SIMPLIFIED_LABEL : SIMPLIFY_IDLE_LABEL;
+  simplifyButton.classList.toggle('is-active', isSimplified);
+}
+
+async function syncSimplifyStateFromTab(): Promise<void> {
+  try {
+    const tabId = await getActiveTabId();
+    const response = await sendContentMessage(tabId, { type: 'SQUINT_SIMPLIFY_STATUS_REQUEST' });
+    if (response && response.type === 'SQUINT_SIMPLIFY_STATUS_RESULT') setSimplifiedState(response.applied);
+  } catch {
+    // No content script on this page (e.g. chrome:// tabs) — stay in idle state.
+  }
+}
+
+async function simplify(): Promise<void> {
+  simplifyStatusEl.textContent = 'Scanning page...';
+  const tabId = await getActiveTabId();
+  const scanResponse = await sendContentMessage(tabId, { type: 'SQUINT_SIMPLIFY_SCAN_REQUEST' });
+  if (!scanResponse || scanResponse.type !== 'SQUINT_SIMPLIFY_SCAN_RESULT') return;
+
+  if (scanResponse.summary.totalFlagged === 0) {
+    simplifyStatusEl.textContent = 'Nothing to simplify on this page.';
+    return;
+  }
+
+  const applyResponse = await sendContentMessage(tabId, { type: 'SQUINT_SIMPLIFY_APPLY' });
+  if (applyResponse && applyResponse.type === 'SQUINT_SIMPLIFY_APPLY_RESULT') {
+    simplifyStatusEl.textContent = `Simplified ${applyResponse.appliedCount} elements.`;
+    setSimplifiedState(true);
+  }
+}
+
+async function unSimplify(): Promise<void> {
+  simplifyStatusEl.textContent = 'Restoring page...';
+  const tabId = await getActiveTabId();
+  const response = await sendContentMessage(tabId, { type: 'SQUINT_SIMPLIFY_REMOVE' });
+  if (!response) {
+    simplifyStatusEl.textContent = 'Undo failed — try reloading the page.';
+    return;
+  }
+  if (response.type === 'SQUINT_SIMPLIFY_REMOVE_RESULT') {
+    simplifyStatusEl.textContent = '';
+    setSimplifiedState(false);
+  }
+}
+
+async function handleSimplifyToggle(): Promise<void> {
+  simplifyButton.disabled = true;
+  try {
+    if (simplified) {
+      await unSimplify();
+    } else {
+      await simplify();
+    }
+  } catch (error) {
+    simplifyStatusEl.textContent = error instanceof Error ? error.message : 'Something went wrong.';
+  } finally {
+    simplifyButton.disabled = false;
+  }
+}
+
+simplifyButton.addEventListener('click', () => {
+  void handleSimplifyToggle();
+});
+
+void syncSimplifyStateFromTab();
