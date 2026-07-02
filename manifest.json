@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Squint",
+  "version": "0.1.0",
+  "description": "Cleanse my eyes: compute real accessibility/contrast fixes that match the page's own palette.",
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Squint — Cleanse my eyes"
+  },
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": ["activeTab"]
+}
