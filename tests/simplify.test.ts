@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import type { ImageDescriptor } from '../src/simplify';
 import {
   isMarqueeElement,
+  isLikelyAvatar,
   isSmallNonLinkedImage,
   isSmallAnimatedElement,
   isLargeBackgroundImageElement,
@@ -25,63 +27,90 @@ describe('isMarqueeElement', () => {
   });
 });
 
+function img(overrides: Partial<ImageDescriptor> = {}): ImageDescriptor {
+  return {
+    tagName: 'IMG',
+    widthPx: 40,
+    heightPx: 40,
+    isLinked: false,
+    src: 'a.png',
+    altText: '',
+    className: '',
+    id: '',
+    isCircular: false,
+    ...overrides,
+  };
+}
+
 describe('isSmallNonLinkedImage', () => {
   it('flags small unlinked images', () => {
-    expect(
-      isSmallNonLinkedImage({ tagName: 'IMG', widthPx: 40, heightPx: 40, isLinked: false, src: 'a.png' }),
-    ).toBe(true);
+    expect(isSmallNonLinkedImage(img())).toBe(true);
   });
 
   it('ignores linked images', () => {
-    expect(
-      isSmallNonLinkedImage({ tagName: 'IMG', widthPx: 40, heightPx: 40, isLinked: true, src: 'a.png' }),
-    ).toBe(false);
+    expect(isSmallNonLinkedImage(img({ isLinked: true }))).toBe(false);
   });
 
   it('ignores images above the area threshold', () => {
     const side = Math.sqrt(SMALL_IMAGE_AREA_PX2) + 10;
-    expect(
-      isSmallNonLinkedImage({ tagName: 'IMG', widthPx: side, heightPx: side, isLinked: false, src: 'a.png' }),
-    ).toBe(false);
+    expect(isSmallNonLinkedImage(img({ widthPx: side, heightPx: side }))).toBe(false);
   });
 
   it('ignores non-image tags', () => {
-    expect(
-      isSmallNonLinkedImage({ tagName: 'DIV', widthPx: 10, heightPx: 10, isLinked: false, src: '' }),
-    ).toBe(false);
+    expect(isSmallNonLinkedImage(img({ tagName: 'DIV', widthPx: 10, heightPx: 10, src: '' }))).toBe(false);
+  });
+
+  it('spares circular avatars', () => {
+    expect(isSmallNonLinkedImage(img({ isCircular: true }))).toBe(false);
+  });
+
+  it('spares images with avatar conventions in class/alt/src', () => {
+    expect(isSmallNonLinkedImage(img({ className: 'user-avatar' }))).toBe(false);
+    expect(isSmallNonLinkedImage(img({ altText: 'Profile photo of Jane' }))).toBe(false);
+    expect(isSmallNonLinkedImage(img({ src: 'https://gravatar.com/x.png' }))).toBe(false);
+    expect(isSmallNonLinkedImage(img({ id: 'account-pic' }))).toBe(false);
+  });
+});
+
+describe('isLikelyAvatar', () => {
+  it('detects circular images', () => {
+    expect(isLikelyAvatar(img({ isCircular: true }))).toBe(true);
+  });
+
+  it('detects avatar/profile/userpic hints', () => {
+    expect(isLikelyAvatar(img({ className: 'avatar' }))).toBe(true);
+    expect(isLikelyAvatar(img({ className: 'profile-pic' }))).toBe(true);
+    expect(isLikelyAvatar(img({ className: 'userpic' }))).toBe(true);
+    expect(isLikelyAvatar(img({ altText: 'pfp' }))).toBe(true);
+  });
+
+  it('does not flag ordinary decorative images', () => {
+    expect(isLikelyAvatar(img({ className: 'sparkle-icon', src: 'star.png' }))).toBe(false);
   });
 });
 
 describe('isSmallAnimatedElement', () => {
   it('flags small gif images', () => {
-    expect(
-      isSmallAnimatedElement({ tagName: 'IMG', widthPx: 50, heightPx: 50, isLinked: false, src: 'a.gif' }),
-    ).toBe(true);
+    expect(isSmallAnimatedElement(img({ widthPx: 50, heightPx: 50, src: 'a.gif' }))).toBe(true);
   });
 
   it('flags gif with query string', () => {
-    expect(
-      isSmallAnimatedElement({
-        tagName: 'IMG',
-        widthPx: 50,
-        heightPx: 50,
-        isLinked: false,
-        src: 'a.gif?v=2',
-      }),
-    ).toBe(true);
+    expect(isSmallAnimatedElement(img({ widthPx: 50, heightPx: 50, src: 'a.gif?v=2' }))).toBe(true);
   });
 
   it('ignores non-animated extensions', () => {
-    expect(
-      isSmallAnimatedElement({ tagName: 'IMG', widthPx: 50, heightPx: 50, isLinked: false, src: 'a.png' }),
-    ).toBe(false);
+    expect(isSmallAnimatedElement(img({ widthPx: 50, heightPx: 50, src: 'a.png' }))).toBe(false);
   });
 
   it('ignores gifs above the animated area threshold', () => {
     const side = Math.sqrt(SMALL_ANIMATED_AREA_PX2) + 10;
-    expect(
-      isSmallAnimatedElement({ tagName: 'IMG', widthPx: side, heightPx: side, isLinked: false, src: 'a.gif' }),
-    ).toBe(false);
+    expect(isSmallAnimatedElement(img({ widthPx: side, heightPx: side, src: 'a.gif' }))).toBe(false);
+  });
+
+  it('spares animated avatars', () => {
+    expect(isSmallAnimatedElement(img({ widthPx: 50, heightPx: 50, src: 'a.gif', isCircular: true }))).toBe(
+      false,
+    );
   });
 });
 

@@ -64,7 +64,6 @@ async function unCleanse(): Promise<void> {
   statusEl.textContent = 'Restoring page...';
   const tabId = await getActiveTabId();
   const response = await sendContentMessage(tabId, { type: 'SQUINT_REMOVE_FIXES' });
-  console.error('[Squint] undo response:', response, 'lastError:', chrome.runtime.lastError);
   if (!response) {
     statusEl.textContent = 'Undo failed — try reloading the page.';
     return;

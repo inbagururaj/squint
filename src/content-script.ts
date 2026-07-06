@@ -163,7 +163,15 @@ function isLinkedElement(el: Element): boolean {
   return el.closest('a') !== null;
 }
 
-function toImageDescriptor(el: HTMLElement): ImageDescriptor {
+function isRenderedCircular(rect: DOMRect, style: CSSStyleDeclaration): boolean {
+  const minSide = Math.min(rect.width, rect.height);
+  if (minSide <= 0) return false;
+  // Computed border-*-radius resolves to px; a circle needs a radius of half the shorter side.
+  const radius = parseFloat(style.borderTopLeftRadius);
+  return Number.isFinite(radius) && radius >= minSide / 2 - 1;
+}
+
+function toImageDescriptor(el: HTMLElement, style: CSSStyleDeclaration): ImageDescriptor {
   const rect = el.getBoundingClientRect();
   return {
     tagName: el.tagName,
@@ -171,6 +179,10 @@ function toImageDescriptor(el: HTMLElement): ImageDescriptor {
     heightPx: rect.height,
     isLinked: isLinkedElement(el),
     src: el instanceof HTMLImageElement ? el.currentSrc || el.src : '',
+    altText: el instanceof HTMLImageElement ? el.alt : '',
+    className: el.getAttribute('class') ?? '',
+    id: el.id,
+    isCircular: isRenderedCircular(rect, style),
   };
 }
 
@@ -223,7 +235,7 @@ function runSimplifyScan(): SimplifySummary {
     }
 
     if (el instanceof HTMLImageElement || el.tagName === 'PICTURE') {
-      const descriptor = toImageDescriptor(el);
+      const descriptor = toImageDescriptor(el, style);
       if (isSmallAnimatedElement(descriptor)) {
         const id = nextSimplifyId(el);
         simplifyCandidates.push({ squintId: id, kind: 'small-animated' });
@@ -301,13 +313,11 @@ chrome.runtime.onMessage.addListener(
       return false;
     }
     if (message.type === 'SQUINT_REMOVE_FIXES') {
-      try {
-        stopObserver();
-        removeFixes();
-        sendResponse({ type: 'SQUINT_REMOVE_RESULT' });
-      } catch (err) {
-        console.error('[Squint] removeFixes failed:', err);
-      }
+      // Disconnect the persistence observer BEFORE removing the style element, or the
+      // observer's own re-append would immediately undo the undo.
+      stopObserver();
+      removeFixes();
+      sendResponse({ type: 'SQUINT_REMOVE_RESULT' });
       return false;
     }
     if (message.type === 'SQUINT_STATUS_REQUEST') {
@@ -326,13 +336,10 @@ chrome.runtime.onMessage.addListener(
       return false;
     }
     if (message.type === 'SQUINT_SIMPLIFY_REMOVE') {
-      try {
-        stopSimplifyObserver();
-        removeSimplify();
-        sendResponse({ type: 'SQUINT_SIMPLIFY_REMOVE_RESULT' });
-      } catch (err) {
-        console.error('[Squint] removeSimplify failed:', err);
-      }
+      // Disconnect before removal so the persistence observer cannot re-append the element.
+      stopSimplifyObserver();
+      removeSimplify();
+      sendResponse({ type: 'SQUINT_SIMPLIFY_REMOVE_RESULT' });
       return false;
     }
     if (message.type === 'SQUINT_SIMPLIFY_STATUS_REQUEST') {
