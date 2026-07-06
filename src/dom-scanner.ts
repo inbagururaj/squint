@@ -11,6 +11,27 @@ function isExcludedElement(el: Element): boolean {
   return false;
 }
 
+// An element that IS or CONTAINS a real image must never receive a background fix:
+// a background-color would show through a transparent image and background-image:none
+// (applied for the icon/gradient case) would erase image content. Images are a hard
+// non-goal, so any element wrapping one is excluded from selection entirely.
+export function containsImageContent(el: Element): boolean {
+  if (el.tagName === 'IMG' || el.tagName === 'PICTURE') return true;
+  return el.querySelector('img, picture') !== null;
+}
+
+// Walk the light DOM and every OPEN shadow root beneath `root`. Closed shadow roots
+// expose no `shadowRoot` handle and are unreachable by design (documented non-goal).
+export function collectElementsDeep(root: ParentNode): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  for (const el of Array.from(root.querySelectorAll<HTMLElement>('*'))) {
+    out.push(el);
+    const shadow = el.shadowRoot;
+    if (shadow) out.push(...collectElementsDeep(shadow));
+  }
+  return out;
+}
+
 function hasDirectVisibleText(el: Element): boolean {
   for (const node of Array.from(el.childNodes)) {
     if (node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').trim().length > 0) {
@@ -35,6 +56,7 @@ function hasClippedFixedHeight(style: CSSStyleDeclaration, el: HTMLElement): boo
 
 function qualifiesAsTextElement(el: HTMLElement): CSSStyleDeclaration | null {
   if (isExcludedElement(el)) return null;
+  if (containsImageContent(el)) return null;
   if (!hasDirectVisibleText(el)) return null;
   if (el.innerText.trim().length === 0) return null;
   const style = window.getComputedStyle(el);
@@ -107,7 +129,7 @@ function requestIdle(callback: () => void): void {
 }
 
 export function scanVisibleTextElements(onBatch: (elements: ScannedElement[]) => void): Promise<void> {
-  const allElements = Array.from(document.body.querySelectorAll<HTMLElement>('*'));
+  const allElements = collectElementsDeep(document.body);
   const viewportBatch: ScannedElement[] = [];
   const offscreen: HTMLElement[] = [];
 

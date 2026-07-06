@@ -27,9 +27,22 @@ Only run after Automated section passes.
 
 Report exact console output (or "empty") for every step — do not summarize as "worked" / "didn't work."
 
+### Manual — image safety (Task 1)
+8. On badhtml.com, before cleansing, note any logos/content `<img>` on screen.
+   Click "Cleanse my eyes." Confirm NO image is flattened to a solid gray/color
+   box — images must look identical before and after. Report any that change.
+
+### Manual — shadow DOM (Task 2, cannot be automated without jsdom)
+9. Open a page that uses open shadow roots / web components (e.g. any site built
+   with Lit/Stencil, or a quick local page with a custom element whose shadow
+   root contains low-contrast text). Cleanse. Confirm low-contrast text INSIDE
+   the shadow root is recolored, and that undo reverts it. Report console output.
+
 ## Test sites
 - badhtml.com — primary stress test, chaotic real CSS
 - pnwx.com — known 0-failures case (correct behavior, not a bug)
+- shadow DOM (open roots) — any web-component page; verifies scan + fix pierce
+  open shadow roots. Closed shadow roots are unreachable by design (non-goal).
 
 ## Current known state (update as resolved)
 - Undo bug: FIXED (code-verified; needs manual Chrome confirmation, steps 4–6).
@@ -45,4 +58,14 @@ Report exact console output (or "empty") for every step — do not summarize as 
   cross-site `isLikelyAvatar` guard (circular render + avatar/profile keywords).
 - YouTube "Fixed 3 elements, no visible change" (Cleanse): BLOCKED — needs live
   YouTube DOM inspection. See BLOCKED.md for hypotheses + user diagnostic steps.
-- Automated 1–6: all pass (62 unit tests). Manual 1–7: not run (no browser).
+- Logo/content images flattened to gray (Task 1): FIXED. dom-scanner now excludes
+  any element that IS or CONTAINS an `<img>`/`<picture>` from selection, so no
+  background fix is ever applied over image content. Unit-tested
+  (`containsImageContent`). Manual step 8 confirms visually.
+- Shadow DOM coverage (Task 2): IMPLEMENTED. dom-scanner pierces open shadow roots
+  (`collectElementsDeep`); apply-fixes injects a scoped `<style>` per shadow root
+  (document-level style cannot cross the boundary) and undo removes all of them.
+  Open roots only — closed roots are a documented non-goal. Traversal unit-tested;
+  real-shadow-root integration is manual step 9 (jsdom not installed, no-new-deps
+  constraint — see BLOCKED.md).
+- Automated 1–6: all pass (70 unit tests). Manual 1–9: not run (no browser).

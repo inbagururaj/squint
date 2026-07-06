@@ -70,3 +70,62 @@ Manual TESTPLAN steps 1–7 still require the user in real Chrome — not run he
 ### Out-of-scope bug logged
 - `elementsById` unbounded growth across scans (memory only, not functional) —
   see BUGS_FOUND.md.
+
+## 2026-07-05 (session 2) — Logo/image safety + shadow DOM coverage
+
+### Task 1 — content images flattened to gray
+Root cause: `apply-fixes.ts buildRule` applies `background-color:… !important` +
+`background-image:none !important` to every selected element. When a selected
+text element also contains a real `<img>` (icon+label link, `<figure>`+caption,
+table cell with image), the injected `background-color` shows through the
+image's transparent regions — flattening the visible image to a solid box. Images
+are a hard non-goal.
+
+Fix: `src/dom-scanner.ts` now excludes any element that IS or CONTAINS an
+`<img>`/`<picture>` from qualifying as a text element (`containsImageContent`,
+added before the text check in `qualifiesAsTextElement`). Excluded from selection
+entirely → no rule is ever emitted for it → image untouched. Conservative by
+design (the non-goal wins over recovering text contrast on a wrapper element).
+Test: `tests/dom-scanner.test.ts` asserts an element wrapping a real `<img>`
+(and `<img>`/`<picture>` themselves) is flagged, plain text elements are not.
+
+Files: `src/dom-scanner.ts`, `tests/dom-scanner.test.ts`.
+
+### Task 2 — shadow DOM coverage
+Before: `dom-scanner` scanned `document.body.querySelectorAll('*')` — light DOM
+only; elements inside web-component shadow roots were never scanned, and a single
+document-level `<style>` cannot cross the shadow boundary to fix them anyway.
+
+Changes:
+- `src/dom-scanner.ts`: `collectElementsDeep(root)` walks the light DOM and every
+  OPEN shadow root recursively (`el.shadowRoot` is null for closed roots →
+  skipped by design). `scanVisibleTextElements` now uses it.
+- `src/apply-fixes.ts`: rewritten for per-root injection. `applyPreset` now takes
+  the element, groups rules by each element's `getRootNode()`, and injects/updates
+  a scoped `<style id="squint-injected-style">` in each root (document.head for
+  light DOM, the shadow root itself for shadow-hosted elements). All injected
+  style elements are tracked in a module `Set` so `removeFixes()` clears every
+  root and `isApplied()` reflects any connected style. `getOrCreateStyleElement()`
+  (document-level) retained for the persistence observer + status checks.
+- `src/content-script.ts`: `applyChosenPreset` passes `element` in each entry.
+- Persistence-within-shadow-roots is not observed (light-DOM observer retained);
+  noted as a bounded limitation.
+- Scope note: Simplify's scan still walks light DOM only — out of scope for this
+  queue (contrast/Cleanse path only), left unchanged.
+
+Testability: real `attachShadow`/`ShadowRoot` needs a DOM env (jsdom/happy-dom),
+which is a new dependency CONSTRAINTS forbids. Per stop-and-ask, the DOM
+integration test is deferred to BLOCKED.md + manual TESTPLAN step 9; the pure
+traversal logic is unit-tested with duck-typed stubs (light DOM, single + nested
+shadow roots, closed/absent root).
+
+Files: `src/dom-scanner.ts`, `src/apply-fixes.ts`, `src/content-script.ts`,
+`tests/dom-scanner.test.ts`.
+
+### Verification (TESTPLAN Automated 1–6 — all pass)
+- Build exit 0; `node --check` on both bundles silent.
+- `npm test`: 70 passed (was 62; +8 dom-scanner tests), 0 failing.
+- No AI/network grep in src; `tsc --noEmit` clean (no `any`); no dead
+  code/TODO/console in src.
+- Manual steps 1–9 still require real Chrome — not run here (added step 8 image
+  safety, step 9 shadow DOM).

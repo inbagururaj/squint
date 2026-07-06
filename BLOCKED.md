@@ -49,3 +49,27 @@ Once the actual 3 elements + which hypothesis holds are known, the fix is
 targeted (e.g. boost selector specificity, or re-stamp attributes on the
 observer's re-render callback) and can be done in a follow-up session without
 guessing.
+
+## Shadow-DOM integration test needs jsdom (blocked by no-new-deps)
+
+**Status:** partial — code shipped, one requested test could not be added.
+Task 2 asked for a unit fixture with "a custom element + shadow root containing
+a low-contrast element, assert it's detected and fixed." That requires a DOM
+environment with `attachShadow`/`ShadowRoot` — jsdom or happy-dom. Neither is
+installed, and CONSTRAINTS forbids adding npm dependencies. Per the stop-and-ask
+rule ("a fix seems to require a new dependency → pause and log"), the DOM
+integration test is deferred.
+
+**What was done instead (no new deps):**
+- The shadow-traversal logic (`collectElementsDeep`) and the image-exclusion
+  logic (`containsImageContent`) were extracted as pure/duck-typed seams and
+  unit-tested in the existing node environment (`tests/dom-scanner.test.ts`,
+  8 tests) — covering light DOM, single shadow root, nested shadow roots, and
+  the absent/closed-root case.
+- The real-DOM behavior (scan + scoped-style fix actually reaching inside a live
+  shadow root, and undo removing the per-root style) is left as manual TESTPLAN
+  step 9.
+
+**To lift this block:** if the user approves adding `jsdom` (or `happy-dom`) as a
+devDependency and a `vitest` config with `environment: 'jsdom'`, the integration
+test can be written directly.

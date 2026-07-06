@@ -4,13 +4,34 @@ import { rgbToCssString } from './color-utils';
 
 const STYLE_ELEMENT_ID = 'squint-injected-style';
 
-export function getOrCreateStyleElement(): HTMLStyleElement {
-  const existing = document.getElementById(STYLE_ELEMENT_ID);
-  if (existing instanceof HTMLStyleElement) return existing;
+type StyleRoot = Document | ShadowRoot;
+
+// A document-level <style> cannot reach shadow-encapsulated elements, so fixes are
+// injected once per root (document.head + one style per open shadow root). Every
+// injected element is tracked here so undo removes all of them regardless of root.
+const injectedStyles = new Set<HTMLStyleElement>();
+
+function styleContainerFor(root: StyleRoot): ParentNode {
+  return root instanceof ShadowRoot ? root : document.head;
+}
+
+function getOrCreateStyleElementInRoot(root: StyleRoot): HTMLStyleElement {
+  const container = styleContainerFor(root);
+  const existing = container.querySelector<HTMLStyleElement>(`style#${STYLE_ELEMENT_ID}`);
+  if (existing) {
+    injectedStyles.add(existing);
+    return existing;
+  }
   const style = document.createElement('style');
   style.id = STYLE_ELEMENT_ID;
-  document.head.appendChild(style);
+  container.appendChild(style);
+  injectedStyles.add(style);
   return style;
+}
+
+// Document-level style handle, used by the persistence observer and status checks.
+export function getOrCreateStyleElement(): HTMLStyleElement {
+  return getOrCreateStyleElementInRoot(document);
 }
 
 function buildRule(squintId: number, text: RGB, background: RGB): string {
@@ -19,17 +40,38 @@ function buildRule(squintId: number, text: RGB, background: RGB): string {
   return `[${SQUINT_ID_ATTR}="${squintId}"]{color:${rgbToCssString(text)} !important;background-color:${rgbToCssString(background)} !important;background-image:none !important;}`;
 }
 
-export function applyPreset(entries: Array<{ squintId: number; text: RGB; background: RGB }>): void {
-  const styleEl = getOrCreateStyleElement();
-  styleEl.textContent = entries.map((e) => buildRule(e.squintId, e.text, e.background)).join('\n');
+function rootOf(element: HTMLElement): StyleRoot {
+  const root = element.getRootNode();
+  // A `[data-squint-id]` rule only matches within the root that owns the element, so
+  // shadow-hosted elements must have their rule injected into that shadow root.
+  return root instanceof ShadowRoot ? root : document;
+}
+
+export function applyPreset(
+  entries: Array<{ element: HTMLElement; squintId: number; text: RGB; background: RGB }>,
+): void {
+  const rulesByRoot = new Map<StyleRoot, string[]>();
+  for (const entry of entries) {
+    const root = rootOf(entry.element);
+    const rules = rulesByRoot.get(root) ?? [];
+    rules.push(buildRule(entry.squintId, entry.text, entry.background));
+    rulesByRoot.set(root, rules);
+  }
+  for (const [root, rules] of rulesByRoot) {
+    getOrCreateStyleElementInRoot(root).textContent = rules.join('\n');
+  }
 }
 
 export function removeFixes(): void {
-  document.getElementById(STYLE_ELEMENT_ID)?.remove();
+  for (const style of injectedStyles) style.remove();
+  injectedStyles.clear();
 }
 
 export function isApplied(): boolean {
-  return document.getElementById(STYLE_ELEMENT_ID) !== null;
+  for (const style of injectedStyles) {
+    if (style.isConnected) return true;
+  }
+  return false;
 }
 
 export function watchStylesheetPersistence(styleEl: HTMLStyleElement): MutationObserver {

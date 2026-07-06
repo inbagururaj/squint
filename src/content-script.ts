@@ -104,9 +104,9 @@ function applyChosenPreset(presetId: PresetId): number {
       const variant = fe.variants.find((v) => v.presetId === presetId);
       const element = elementsById.get(fe.squintId);
       if (!variant || !element) return null;
-      return { squintId: fe.squintId, text: variant.text, background: variant.background };
+      return { element, squintId: fe.squintId, text: variant.text, background: variant.background };
     })
-    .filter((e): e is { squintId: number; text: RGB; background: RGB } => e !== null);
+    .filter((e): e is { element: HTMLElement; squintId: number; text: RGB; background: RGB } => e !== null);
 
   applyPreset(entries);
   return entries.length;
